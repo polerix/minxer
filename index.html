@@ -2,83 +2,72 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Minkowski Shader Image Processor</title>
+    <title>Multi-Mode Shader Studio</title>
     <style>
         body { margin: 0; overflow: hidden; background: #111; font-family: monospace; color: #fff; }
         #canvas-container { width: 100vw; height: 100vh; }
         #ui {
             position: absolute; top: 10px; left: 10px; padding: 15px;
-            background: rgba(0,0,0,0.8); border: 1px solid #444; border-radius: 4px;
-            display: flex; flex-direction: column; gap: 10px; width: 220px;
+            background: rgba(0,0,0,0.85); border: 1px solid #444; border-radius: 4px;
+            display: flex; flex-direction: column; gap: 10px; width: 240px; z-index: 10;
         }
-        label { font-size: 11px; display: flex; justify-content: space-between; }
+        label { font-size: 11px; display: flex; justify-content: space-between; align-items: center; }
         input[type="range"] { width: 100%; }
-        input[type="file"] { font-size: 11px; }
+        select, input[type="file"] { font-size: 11px; background: #222; color: #fff; border: 1px solid #555; padding: 2px; }
+        .mode-group { display: none; flex-direction: column; gap: 10px; }
+        .mode-group.active { display: flex; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
 <div id="ui">
+    <label>Shader Mode:</label>
+    <select id="mode-select">
+        <option value="minkowski">Minkowski Geometry</option>
+        <option value="liquidCrystal">Liquid Crystal Dynamics</option>
+    </select>
+
     <label>Load Custom Image:</label>
     <input type="file" id="file-input" accept="image/*">
     <hr style="border:0; border-top:1px solid #444; width:100%;">
-    
-    <label>Scale <span id="val-scale">10.0</span></label>
-    <input type="range" id="scale" min="1" max="50" value="10" step="0.1">
-    
-    <label>Warp Intensity <span id="val-warp">0.5</span></label>
-    <input type="range" id="warp" min="0" max="2" value="0.5" step="0.01">
 
+    <!-- Common Controls -->
     <label>Cycle Speed <span id="val-speed">1.0</span></label>
     <input type="range" id="speed" min="0" max="5" value="1.0" step="0.1">
 
-    <label>Color Mix <span id="val-mix">0.5</span></label>
-    <input type="range" id="mix" min="0" max="1" value="0.5" step="0.01">
+    <!-- Minkowski Controls -->
+    <div id="controls-minkowski" class="mode-group active">
+        <label>Scale <span id="val-scale">10.0</span></label>
+        <input type="range" id="scale" min="1" max="50" value="10" step="0.1">
+        
+        <label>Warp Intensity <span id="val-warp">0.5</span></label>
+        <input type="range" id="warp" min="0" max="2" value="0.5" step="0.01">
+
+        <label>Color Mix <span id="val-mix">0.5</span></label>
+        <input type="range" id="mix" min="0" max="1" value="0.5" step="0.01">
+    </div>
+
+    <!-- Liquid Crystal Controls -->
+    <div id="controls-liquidCrystal" class="mode-group">
+        <label>Dispersion (b) <span id="val-dispersion">2.55</span></label>
+        <input type="range" id="dispersion" min="0.1" max="10.0" value="2.55" step="0.01">
+
+        <label>Nonlinear (a) <span id="val-nonlinear">-2.48</span></label>
+        <input type="range" id="nonlinear" min="-5.0" max="5.0" value="-2.48" step="0.01">
+
+        <label>Defect Chaos <span id="val-chaos">10.15</span></label>
+        <input type="range" id="chaos" min="1.0" max="30.0" value="10.15" step="0.01">
+        
+        <label>Image Distortion <span id="val-lc-mix">0.3</span></label>
+        <input type="range" id="lc-mix" min="0" max="1" value="0.3" step="0.01">
+    </div>
 </div>
 
 <div id="canvas-container"></div>
 
 <script>
-const fragmentShader = `
-    uniform sampler2D u_texture;
-    uniform vec2 u_resolution;
-    uniform float u_time;
-    uniform float u_scale;
-    uniform float u_warp;
-    uniform float u_mix;
-
-    varying vec2 vUv;
-
-    void main() {
-        // Center coordinates (-1.0 to 1.0) adjusting for aspect ratio
-        vec2 st = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / min(u_resolution.x, u_resolution.y);
-        
-        // Scale space
-        st *= u_scale;
-
-        // Minkowski pseudo-metric: x^2 - y^2
-        float minkowski = st.x * st.x - st.y * st.y;
-
-        // Compute hyperbolic distance field with time offset
-        float field = sin(minkowski * u_warp - u_time);
-
-        // Distort UV texture coordinates along the hyperbolic field
-        vec2 distortedUv = vUv + vec2(cos(field), sin(field)) * (u_warp * 0.1);
-
-        // Fetch original texture color with distorted UVs
-        vec4 texColor = texture2D(u_texture, fract(distortedUv));
-
-        // Generate synthetic color cycling bands
-        vec3 cycleColor = 0.5 + 0.5 * cos(u_time + field + vec3(0.0, 2.0, 4.0));
-
-        // Blend raw image with the Minkowski metric field
-        vec3 finalColor = mix(texColor.rgb, texColor.rgb * cycleColor, u_mix);
-
-        gl_FragColor = vec4(finalColor, 1.0);
-    }
-`;
-
+// Vertex Shader (Shared)
 const vertexShader = `
     varying vec2 vUv;
     void main() {
@@ -87,7 +76,74 @@ const vertexShader = `
     }
 `;
 
-// Initialize Scene
+// Fragment Shader 1: Minkowski
+const fragmentMinkowski = `
+    uniform sampler2D u_texture;
+    uniform vec2 u_resolution;
+    uniform float u_time;
+    uniform float u_scale;
+    uniform float u_warp;
+    uniform float u_mix;
+    varying vec2 vUv;
+
+    void main() {
+        vec2 st = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / min(u_resolution.x, u_resolution.y);
+        st *= u_scale;
+        float minkowski = st.x * st.x - st.y * st.y;
+        float field = sin(minkowski * u_warp - u_time);
+        vec2 distortedUv = vUv + vec2(cos(field), sin(field)) * (u_warp * 0.1);
+        vec4 texColor = texture2D(u_texture, fract(distortedUv));
+        vec3 cycleColor = 0.5 + 0.5 * cos(u_time + field + vec3(0.0, 2.0, 4.0));
+        gl_FragColor = vec4(mix(texColor.rgb, texColor.rgb * cycleColor, u_mix), 1.0);
+    }
+`;
+
+// Fragment Shader 2: Liquid Crystal Birefringence Simulation
+const fragmentLiquidCrystal = `
+    uniform sampler2D u_texture;
+    uniform vec2 u_resolution;
+    uniform float u_time;
+    uniform float u_dispersion;
+    uniform float u_nonlinear;
+    uniform float u_chaos;
+    uniform float u_lc_mix;
+    varying vec2 vUv;
+
+    // Complex number multiplication
+    vec2 c_mul(vec2 a, vec2 b) {
+        return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
+    }
+
+    void main() {
+        vec2 p = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / min(u_resolution.x, u_resolution.y);
+        p *= 4.0;
+
+        // Pseudo-CGLE phase field approximation using interference superposition
+        vec2 psi = vec2(0.0);
+        for(float i = 1.0; i <= 6.0; i += 1.0) {
+            float angle = i * 1.0472; // 60-degree rotational symmetry
+            vec2 dir = vec2(cos(angle), sin(angle));
+            float phase = dot(p, dir) * u_chaos + u_time * 0.5;
+            psi += vec2(cos(phase + u_dispersion), sin(phase * u_nonlinear));
+        }
+
+        // Compute phase angle (Nematic director orientation angle theta)
+        float directorAngle = atan(psi.y, psi.x);
+
+        // Birefringence color palette (cross-polarized light modulation)
+        vec3 birefringence = 0.5 + 0.5 * cos(directorAngle * 2.0 + u_time + vec3(0.0, 2.094, 4.188));
+
+        // Refractive displacement for loaded image
+        vec2 displacement = vec2(cos(directorAngle), sin(directorAngle)) * 0.05 * u_lc_mix;
+        vec4 texColor = texture2D(u_texture, fract(vUv + displacement));
+
+        // Final composite
+        vec3 finalColor = mix(texColor.rgb, texColor.rgb * birefringence, 0.7);
+        gl_FragColor = vec4(finalColor, 1.0);
+    }
+`;
+
+// Initialize Renderer & Scene
 const container = document.getElementById('canvas-container');
 const scene = new THREE.Scene();
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -95,7 +151,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 container.appendChild(renderer.domElement);
 
-// Generate default procedural texture
+// Default procedural texture
 const canvas = document.createElement('canvas');
 canvas.width = canvas.height = 256;
 const ctx = canvas.getContext('2d');
@@ -107,37 +163,61 @@ for (let x=0; x<256; x++) {
 }
 let texture = new THREE.CanvasTexture(canvas);
 
-// Uniforms
+// Uniform Storage
 const uniforms = {
     u_texture: { value: texture },
     u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
     u_time: { value: 0 },
+    // Minkowski
     u_scale: { value: 10.0 },
     u_warp: { value: 0.5 },
-    u_mix: { value: 0.5 }
+    u_mix: { value: 0.5 },
+    // Liquid Crystal
+    u_dispersion: { value: 2.55 },
+    u_nonlinear: { value: -2.48 },
+    u_chaos: { value: 10.15 },
+    u_lc_mix: { value: 0.3 }
 };
 
-const material = new THREE.ShaderMaterial({ vertexShader, fragmentShader, uniforms });
-const geometry = new THREE.PlaneGeometry(2, 2);
-scene.add(new THREE.Mesh(geometry, material));
+// Materials
+const materials = {
+    minkowski: new THREE.ShaderMaterial({ vertexShader, fragmentShader: fragmentMinkowski, uniforms }),
+    liquidCrystal: new THREE.ShaderMaterial({ vertexShader, fragmentShader: fragmentLiquidCrystal, uniforms })
+};
 
-// UI Binding
+const geometry = new THREE.PlaneGeometry(2, 2);
+const mesh = new THREE.Mesh(geometry, materials.minkowski);
+scene.add(mesh);
+
+// UI Binding Logic
 let speed = 1.0;
-const bindInput = (id, targetUniform, targetVal) => {
+const bindInput = (id, targetUniform, isSpeed = false) => {
     document.getElementById(id).addEventListener('input', (e) => {
         const val = parseFloat(e.target.value);
         if (targetUniform) uniforms[targetUniform].value = val;
-        if (targetVal) speed = val;
-        document.getElementById(`val-${id}`).innerText = val.toFixed(1);
+        if (isSpeed) speed = val;
+        document.getElementById(`val-${id}`).innerText = val.toFixed(2);
     });
 };
 
+bindInput('speed', null, true);
 bindInput('scale', 'u_scale');
 bindInput('warp', 'u_warp');
-bindInput('speed', null, true);
 bindInput('mix', 'u_mix');
+bindInput('dispersion', 'u_dispersion');
+bindInput('nonlinear', 'u_nonlinear');
+bindInput('chaos', 'u_chaos');
+bindInput('lc-mix', 'u_lc_mix');
 
-// Image Upload Handling
+// Mode Switcher
+document.getElementById('mode-select').addEventListener('change', (e) => {
+    const mode = e.target.value;
+    mesh.material = materials[mode];
+    document.querySelectorAll('.mode-group').forEach(el => el.classList.remove('active'));
+    document.getElementById(`controls-${mode}`).classList.add('active');
+});
+
+// File Upload Handler
 document.getElementById('file-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -157,7 +237,7 @@ window.addEventListener('resize', () => {
     uniforms.u_resolution.value.set(window.innerWidth, window.innerHeight);
 });
 
-// Render Loop
+// Animation Loop
 const clock = new THREE.Clock();
 function animate() {
     requestAnimationFrame(animate);

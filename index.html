@@ -2,18 +2,19 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Multi-Mode Shader Studio</title>
+    <title>Multi-Mode Shader & Audio Studio</title>
     <style>
         body { margin: 0; overflow: hidden; background: #111; font-family: monospace; color: #fff; }
         #canvas-container { width: 100vw; height: 100vh; }
         #ui {
             position: absolute; top: 10px; left: 10px; padding: 15px;
             background: rgba(0,0,0,0.85); border: 1px solid #444; border-radius: 4px;
-            display: flex; flex-direction: column; gap: 10px; width: 240px; z-index: 10;
+            display: flex; flex-direction: column; gap: 10px; width: 250px; z-index: 10;
         }
         label { font-size: 11px; display: flex; justify-content: space-between; align-items: center; }
         input[type="range"] { width: 100%; }
-        select, input[type="file"] { font-size: 11px; background: #222; color: #fff; border: 1px solid #555; padding: 2px; }
+        select, input[type="file"], button { font-size: 11px; background: #222; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 2px; cursor: pointer; }
+        button:hover { background: #333; }
         .mode-group { display: none; flex-direction: column; gap: 10px; }
         .mode-group.active { display: flex; }
     </style>
@@ -24,8 +25,9 @@
 <div id="ui">
     <label>Shader Mode:</label>
     <select id="mode-select">
-        <option value="minkowski">Minkowski Geometry</option>
-        <option value="liquidCrystal">Liquid Crystal Dynamics</option>
+        <option value="minkowski">1. Minkowski Geometry</option>
+        <option value="liquidCrystal">2. Liquid Crystal Dynamics</option>
+        <option value="voxelAudio">3. Voxel Audio Heightmap</option>
     </select>
 
     <label>Load Custom Image:</label>
@@ -36,7 +38,7 @@
     <label>Cycle Speed <span id="val-speed">1.0</span></label>
     <input type="range" id="speed" min="0" max="5" value="1.0" step="0.1">
 
-    <!-- Minkowski Controls -->
+    <!-- Mode 1: Minkowski Controls -->
     <div id="controls-minkowski" class="mode-group active">
         <label>Scale <span id="val-scale">10.0</span></label>
         <input type="range" id="scale" min="1" max="50" value="10" step="0.1">
@@ -48,7 +50,7 @@
         <input type="range" id="mix" min="0" max="1" value="0.5" step="0.01">
     </div>
 
-    <!-- Liquid Crystal Controls -->
+    <!-- Mode 2: Liquid Crystal Controls -->
     <div id="controls-liquidCrystal" class="mode-group">
         <label>Dispersion (b) <span id="val-dispersion">2.55</span></label>
         <input type="range" id="dispersion" min="0.1" max="10.0" value="2.55" step="0.01">
@@ -61,6 +63,19 @@
         
         <label>Image Distortion <span id="val-lc-mix">0.3</span></label>
         <input type="range" id="lc-mix" min="0" max="1" value="0.3" step="0.01">
+    </div>
+
+    <!-- Mode 3: Voxel Audio Controls -->
+    <div id="controls-voxelAudio" class="mode-group">
+        <button id="btn-audio">Enable Audio Engine</button>
+        <label>Grid Density <span id="val-grid">40.0</span></label>
+        <input type="range" id="grid" min="10" max="100" value="40" step="1">
+
+        <label>Wave Height <span id="val-height">1.5</span></label>
+        <input type="range" id="height" min="0.1" max="4.0" value="1.5" step="0.1">
+
+        <label>Synth Tempo <span id="val-tempo">120</span> BPM</label>
+        <input type="range" id="tempo" min="40" max="240" value="120" step="1">
     </div>
 </div>
 
@@ -76,7 +91,7 @@ const vertexShader = `
     }
 `;
 
-// Fragment Shader 1: Minkowski
+// Mode 1: Minkowski
 const fragmentMinkowski = `
     uniform sampler2D u_texture;
     uniform vec2 u_resolution;
@@ -98,7 +113,7 @@ const fragmentMinkowski = `
     }
 `;
 
-// Fragment Shader 2: Liquid Crystal Birefringence Simulation
+// Mode 2: Liquid Crystal
 const fragmentLiquidCrystal = `
     uniform sampler2D u_texture;
     uniform vec2 u_resolution;
@@ -109,41 +124,82 @@ const fragmentLiquidCrystal = `
     uniform float u_lc_mix;
     varying vec2 vUv;
 
-    // Complex number multiplication
-    vec2 c_mul(vec2 a, vec2 b) {
-        return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
-    }
-
     void main() {
         vec2 p = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / min(u_resolution.x, u_resolution.y);
         p *= 4.0;
 
-        // Pseudo-CGLE phase field approximation using interference superposition
         vec2 psi = vec2(0.0);
         for(float i = 1.0; i <= 6.0; i += 1.0) {
-            float angle = i * 1.0472; // 60-degree rotational symmetry
+            float angle = i * 1.0472;
             vec2 dir = vec2(cos(angle), sin(angle));
             float phase = dot(p, dir) * u_chaos + u_time * 0.5;
             psi += vec2(cos(phase + u_dispersion), sin(phase * u_nonlinear));
         }
 
-        // Compute phase angle (Nematic director orientation angle theta)
         float directorAngle = atan(psi.y, psi.x);
-
-        // Birefringence color palette (cross-polarized light modulation)
         vec3 birefringence = 0.5 + 0.5 * cos(directorAngle * 2.0 + u_time + vec3(0.0, 2.094, 4.188));
-
-        // Refractive displacement for loaded image
         vec2 displacement = vec2(cos(directorAngle), sin(directorAngle)) * 0.05 * u_lc_mix;
         vec4 texColor = texture2D(u_texture, fract(vUv + displacement));
 
-        // Final composite
-        vec3 finalColor = mix(texColor.rgb, texColor.rgb * birefringence, 0.7);
-        gl_FragColor = vec4(finalColor, 1.0);
+        gl_FragColor = vec4(mix(texColor.rgb, texColor.rgb * birefringence, 0.7), 1.0);
     }
 `;
 
-// Initialize Renderer & Scene
+// Mode 3: Voxel Raymarching Heightmap
+const fragmentVoxelAudio = `
+    uniform sampler2D u_texture;
+    uniform vec2 u_resolution;
+    uniform float u_time;
+    uniform float u_grid;
+    uniform float u_height;
+    varying vec2 vUv;
+
+    float getHeight(vec2 p) {
+        vec2 gridPos = floor(p * u_grid) / u_grid;
+        vec4 tex = texture2D(u_texture, fract(gridPos * 0.5 + 0.5));
+        float wave = sin(gridPos.x * 5.0 + u_time) * cos(gridPos.y * 5.0 + u_time);
+        return (tex.r * 0.6 + wave * 0.4) * u_height;
+    }
+
+    void main() {
+        vec2 st = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / min(u_resolution.x, u_resolution.y);
+        
+        // Ray Origin & Direction (Isometric Camera View)
+        vec3 ro = vec3(st * 4.0, -5.0);
+        vec3 rd = normalize(vec3(0.3, 0.4, 1.0));
+
+        // Pseudo Raymarching Grid Pillars
+        float t = 0.0;
+        vec3 p;
+        float h = 0.0;
+        bool hit = false;
+
+        for(int i = 0; i < 40; i++) {
+            p = ro + rd * t;
+            h = getHeight(p.xy);
+            if(p.z > -h) {
+                hit = true;
+                break;
+            }
+            t += 0.15;
+        }
+
+        if(hit) {
+            vec2 cell = fract(p.xy * u_grid);
+            float border = step(0.1, cell.x) * step(0.1, cell.y);
+            float normH = clamp((h / u_height), 0.0, 1.0);
+            
+            // Spectrum Color Mapping based on Pillar Elevation
+            vec3 rainbow = 0.5 + 0.5 * cos(normH * 6.283 + vec3(0.0, 2.0, 4.0));
+            vec3 color = mix(rainbow * 0.3, rainbow, border);
+            gl_FragColor = vec4(color, 1.0);
+        } else {
+            gl_FragColor = vec4(0.05, 0.05, 0.08, 1.0);
+        }
+    }
+`;
+
+// Initialize Three.js Environment
 const container = document.getElementById('canvas-container');
 const scene = new THREE.Scene();
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -151,7 +207,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 container.appendChild(renderer.domElement);
 
-// Default procedural texture
+// Default Texture Generation
 const canvas = document.createElement('canvas');
 canvas.width = canvas.height = 256;
 const ctx = canvas.getContext('2d');
@@ -163,7 +219,7 @@ for (let x=0; x<256; x++) {
 }
 let texture = new THREE.CanvasTexture(canvas);
 
-// Uniform Storage
+// Global Uniforms
 const uniforms = {
     u_texture: { value: texture },
     u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
@@ -176,31 +232,38 @@ const uniforms = {
     u_dispersion: { value: 2.55 },
     u_nonlinear: { value: -2.48 },
     u_chaos: { value: 10.15 },
-    u_lc_mix: { value: 0.3 }
+    u_lc_mix: { value: 0.3 },
+    // Voxel
+    u_grid: { value: 40.0 },
+    u_height: { value: 1.5 }
 };
 
-// Materials
+// Shader Materials
 const materials = {
     minkowski: new THREE.ShaderMaterial({ vertexShader, fragmentShader: fragmentMinkowski, uniforms }),
-    liquidCrystal: new THREE.ShaderMaterial({ vertexShader, fragmentShader: fragmentLiquidCrystal, uniforms })
+    liquidCrystal: new THREE.ShaderMaterial({ vertexShader, fragmentShader: fragmentLiquidCrystal, uniforms }),
+    voxelAudio: new THREE.ShaderMaterial({ vertexShader, fragmentShader: fragmentVoxelAudio, uniforms })
 };
 
 const geometry = new THREE.PlaneGeometry(2, 2);
 const mesh = new THREE.Mesh(geometry, materials.minkowski);
 scene.add(mesh);
 
-// UI Binding Logic
+// UI Event Binding Logic
 let speed = 1.0;
-const bindInput = (id, targetUniform, isSpeed = false) => {
+let tempoBpm = 120;
+let activeMode = 'minkowski';
+
+const bindInput = (id, targetUniform, callback) => {
     document.getElementById(id).addEventListener('input', (e) => {
         const val = parseFloat(e.target.value);
         if (targetUniform) uniforms[targetUniform].value = val;
-        if (isSpeed) speed = val;
-        document.getElementById(`val-${id}`).innerText = val.toFixed(2);
+        if (callback) callback(val);
+        document.getElementById(`val-${id}`).innerText = val.toFixed(1);
     });
 };
 
-bindInput('speed', null, true);
+bindInput('speed', null, (v) => speed = v);
 bindInput('scale', 'u_scale');
 bindInput('warp', 'u_warp');
 bindInput('mix', 'u_mix');
@@ -208,13 +271,16 @@ bindInput('dispersion', 'u_dispersion');
 bindInput('nonlinear', 'u_nonlinear');
 bindInput('chaos', 'u_chaos');
 bindInput('lc-mix', 'u_lc_mix');
+bindInput('grid', 'u_grid');
+bindInput('height', 'u_height');
+bindInput('tempo', null, (v) => tempoBpm = v);
 
-// Mode Switcher
+// Mode Switcher Logic
 document.getElementById('mode-select').addEventListener('change', (e) => {
-    const mode = e.target.value;
-    mesh.material = materials[mode];
+    activeMode = e.target.value;
+    mesh.material = materials[activeMode];
     document.querySelectorAll('.mode-group').forEach(el => el.classList.remove('active'));
-    document.getElementById(`controls-${mode}`).classList.add('active');
+    document.getElementById(`controls-${activeMode}`).classList.add('active');
 });
 
 // File Upload Handler
@@ -231,17 +297,78 @@ document.getElementById('file-input').addEventListener('change', (e) => {
     }
 });
 
-// Window Resize
+// Web Audio API Procedural Arpeggiator Engine
+let audioCtx = null;
+let isAudioEnabled = false;
+const pentatonicScale = [130.81, 146.83, 164.81, 196.00, 220.00, 261.63, 293.66, 329.63, 392.00, 440.00, 523.25]; // C Minor Pentatonic frequencies
+
+document.getElementById('btn-audio').addEventListener('click', () => {
+    if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+    isAudioEnabled = !isAudioEnabled;
+    document.getElementById('btn-audio').innerText = isAudioEnabled ? "Mute Audio Engine" : "Enable Audio Engine";
+});
+
+function playTone(freq) {
+    if (!audioCtx || !isAudioEnabled) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    
+    // Envelope: Quick attack, gentle exponential decay
+    gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+    
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.3);
+}
+
+// Procedural Peak Scanning Audio Loop
+let nextNoteTime = 0;
+let scanIndex = 0;
+
+function audioScheduler() {
+    if (activeMode === 'voxelAudio' && isAudioEnabled) {
+        const currentTime = clock.getElapsedTime();
+        const stepInterval = 60.0 / tempoBpm / 4.0; // 16th note arpeggiation
+
+        if (currentTime >= nextNoteTime) {
+            // Evaluate height at current scanning column
+            const scanX = (scanIndex % 10) / 10.0;
+            const wave = Math.sin(scanX * 5.0 + currentTime) * Math.cos(scanX * 5.0 + currentTime);
+            const peakHeight = Math.abs(wave);
+
+            // Quantize height into pentatonic scale index
+            const scaleIdx = Math.floor(peakHeight * pentatonicScale.length) % pentatonicScale.length;
+            playTone(pentatonicScale[scaleIdx]);
+
+            scanIndex++;
+            nextNoteTime = currentTime + stepInterval;
+        }
+    }
+}
+
+// Window Resize Handling
 window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
     uniforms.u_resolution.value.set(window.innerWidth, window.innerHeight);
 });
 
-// Animation Loop
+// Main Animation Loop
 const clock = new THREE.Clock();
 function animate() {
     requestAnimationFrame(animate);
     uniforms.u_time.value += clock.getDelta() * speed;
+    audioScheduler();
     renderer.render(scene, camera);
 }
 animate();
